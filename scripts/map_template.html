@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Amateur Radio License Density — USA</title>
+<style>__MAPLIBRE_CSS__</style>
+<script>window.__fatal=null;window.onerror=function(m,s,l){window.__fatal=m+' @'+l;
+  var d=document.createElement('div'); d.style.cssText='position:fixed;bottom:0;left:0;right:0;background:#7a1f1f;color:#fff;font:12px sans-serif;padding:8px 12px;z-index:99';
+  d.textContent='Map error: '+window.__fatal+' (screenshots welcome)'; document.body&&document.body.appendChild(d);};</script>
+<script>__MAPLIBRE_JS__</script>
+<script>__H3_JS__</script>
+<style>
+  body{margin:0;font-family:-apple-system,system-ui,sans-serif;background:#000}
+  #map{position:absolute;inset:0}
+  .panel{position:absolute;top:12px;left:12px;background:rgba(15,15,18,.88);color:#ddd;
+         border:1px solid #333;border-radius:10px;padding:12px 14px;z-index:10;max-width:300px}
+  .panel h1{font-size:15px;margin:0 0 4px;color:#fff}
+  .panel .sub{font-size:11px;color:#999;margin-bottom:8px}
+  .btns{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+  .btns button{background:#222;color:#ccc;border:1px solid #444;border-radius:6px;
+               padding:4px 9px;font-size:11px;cursor:pointer}
+  .btns button.on{background:#3b6ef6;color:#fff;border-color:#3b6ef6}
+  #ramp{width:100%;height:12px;border-radius:3px;margin:6px 0 2px}
+  #scale{display:flex;justify-content:space-between;font-size:10px;color:#aaa}
+  .note{font-size:10px;color:#777;margin-top:6px;line-height:1.45}
+  .maplibregl-popup-content{background:rgba(18,18,22,.95);color:#eee;border:1px solid #444;
+       border-radius:8px;font-size:12px;padding:8px 11px}
+  .maplibregl-popup-tip{border-top-color:rgba(18,18,22,.95)!important;border-bottom-color:rgba(18,18,22,.95)!important}
+</style></head><body>
+<div id="map"></div>
+<div class="panel">
+  <h1>Ham Radio License Density — USA</h1>
+  <div class="sub" id="dstat"></div>
+  <div class="btns" id="classBtns">
+    <button data-c="c" class="on">All</button>
+    <button data-c="gp">General+</button>
+    <button data-c="ex">Adv/Extra</button>
+  </div>
+  <div class="btns" id="modeBtns">
+    <button data-m="raw" class="on">Per area</button>
+    <button data-m="pc" id="pcBtn" style="display:none">Per capita</button>
+    <button data-m="lines" class="on" id="linesBtn" title="Toggle state outlines">States</button>
+  </div>
+  <div class="btns" id="viewBtns">
+    <button data-v="conus" class="on">Contiguous US</button>
+    <button data-v="ak">Alaska</button>
+    <button data-v="hi">Hawaii</button>
+  </div>
+  <div style="display:flex;align-items:center;gap:8px;margin:4px 0 2px">
+    <span style="font-size:10px;color:#999">contrast</span>
+    <input type="range" id="gamma" min="0.25" max="1.2" step="0.05" value="0.55" style="flex:1"/>
+    <span id="gammaVal" style="font-size:10px;color:#bbb;width:26px">0.55</span>
+  </div>
+  <div id="ramp"></div>
+  <div id="scale"><span id="smin"></span><span>log scale</span><span id="smax"></span></div>
+  <div class="note">FCC ULS active licenses (weekly dump), street-geocoded via US Census.
+  Hexes auto-refine with zoom (H3 res 5/6/7). Hover a hex for counts.</div>
+</div>
+<script>
+const RAW = {5: __DATA_R5__, 6: __DATA_R6__, 7: __DATA_R7__};
+const STATES = __STATES__;
+const MAXN = __MAXN__, RAMP = __RAMP__;
+let classKey = "c", mode = "raw";
+const hasPop = Object.values(RAW).some(a => a.length && a[0].p > 0);
+
+function fc(rows){
+  const h3js = window.h3;
+  return {type:"FeatureCollection", features: rows.map(r=>{
+    const b = h3js.cellToBoundary(r.h);
+    const ring = b.map(([la,lo])=>[+lo.toFixed(5), +la.toFixed(5)]);
+    ring.push(ring[0]);
+    return {type:"Feature", properties:{...r}, geometry:{type:"Polygon", coordinates:[ring]}};
+  })};
+}
+const FC = {5: fc(RAW[5]), 6: fc(RAW[6]), 7: fc(RAW[7])};
+
+// color expression: inferno ramp on log10(value+1)
+const V = ["case", ["<", ["get","c"], 1], 0, ["get","c"]];
+function valExpr(){
+  if (mode==="pc") return ["case", ["<=",["get","pop"],0], 0,
+                           ["/", ["get",classKey], ["/",["get","pop"],1000]]];
+  return ["get", classKey];
+}
+function colorExpr(){ return null; } // unused
+
+function fillExpr(){
+  const g = window.__gamma || 0.55;
+  const norm = Math.pow(Math.log10((mode==="pc" ? 100 : MAXN+1)), g);
+  const stops = [];
+  const n = 32;
+  const hex = s=>[parseInt(s.slice(1,3),16),parseInt(s.slice(3,5),16),parseInt(s.slice(5,7),16)];
+  const rgb2hex = c=>'#'+c.map(v=>Math.round(v).toString(16).padStart(2,'0')).join('');
+  const cols = RAMP.map(hex);
+  for(let i=0;i<=n;i++){
+    const t=i/n, x=t*(RAMP.length-1), i0=Math.min(RAMP.length-2,Math.floor(x)), f=x-i0;
+    const c=cols[i0].map((v,k)=>Math.round(v+(cols[i0+1][k]-v)*f));
+    stops.push(t, rgb2hex(c));
+  }
+  // gamma on normalized log axis: spreads low densities across the ramp
+  const e = ["step", 0, "#00000000"];
+  e[1] = ["/", ["^", ["log10", ["+", valExpr(), 1]], g], norm];
+  stops.forEach(s=>e.push(s));
+  return e;
+}
+
+const map = new maplibregl.Map({container:'map',
+  style:'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+  center:[-98.5,39.3], zoom:3.6});
+map.addControl(new maplibregl.NavigationControl(),'top-right');
+const popup = new maplibregl.Popup({closeButton:false, closeOnClick:false}).setMaxWidth('240px');
+
+function pickRes(z){ return z<4.2?5 : z<6.6?6 : 7; }
+
+map.on('load', ()=>{
+  window.__cur = pickRes(map.getZoom());
+  map.addSource('hams', {type:'geojson', data: FC[window.__cur]});
+  map.addSource('states', {type:'geojson', data: STATES});
+  map.addLayer({id:'hexfill', type:'fill', source:'hams', paint:{
+    'fill-color': fillExpr(), 'fill-opacity': 0.72}});
+  map.addLayer({id:'statehalo', type:'line', source:'states', paint:{
+    'line-color': 'rgba(0,0,0,0.75)',
+    'line-width': ['interpolate',['linear'],['zoom'],3,3.0,7,4.0,10,5.5]}});
+  map.addLayer({id:'statelines', type:'line', source:'states', paint:{
+    'line-color': 'rgba(255,255,255,0.9)',
+    'line-width': ['interpolate',['linear'],['zoom'],3,1.3,7,1.8,10,2.6]}});
+  map.addLayer({id:'statelabels', type:'symbol', source:'states', layout:{
+    'text-field': ['get','n'], 'text-size': ['interpolate',['linear'],['zoom'],3,10,8,17],
+    'text-font': ['Montserrat SemiBold','Open Sans Bold','Noto Sans Regular'],
+    'text-optional': true, 'text-padding': 4},
+    paint: { 'text-color': 'rgba(255,255,255,0.75)',
+             'text-halo-color': 'rgba(0,0,0,0.7)', 'text-halo-width': 1.5 }});
+  refresh();
+});
+function refresh(){
+  map.setPaintProperty('hexfill','fill-color', fillExpr());
+  const n = RAW[window.__cur].length;
+  document.getElementById('dstat').textContent =
+    `${n.toLocaleString()} hexes · max ${MAXN.toLocaleString()} licenses · H3 res ${window.__cur}`;
+  document.getElementById('smin').textContent = mode==='pc' ? '1 /100k pop' : '1';
+  document.getElementById('smax').textContent = mode==='pc' ? '10k /100k pop' : MAXN.toLocaleString();
+  document.querySelector('#ramp').style.background = `linear-gradient(to right, ${RAMP.join(',')})`;
+}
+map.on('zoomend', ()=>{
+  const r = pickRes(map.getZoom());
+  if (r !== window.__cur){ window.__cur = r;
+    map.getSource('hams').setData(FC[r]); refresh(); }
+});
+map.on('mousemove', e=>{
+  const f = map.queryRenderedFeatures(e.point, {layers:['hexfill']});
+  if (f.length){ const p=f[0].properties;
+    popup.setLngLat(e.lngLat).setHTML(
+      `<b>${(+p.c).toLocaleString()}</b> hams · ${(+p.gp).toLocaleString()} Gen+ · ${(+p.ex).toLocaleString()} Adv/E`+
+      (mode==='pc'&&p.pop>0?`<br>${(1000*p[classKey]/p.pop).toFixed(1)} per 1k pop`:'')+
+      `<br><span style="color:#8ab4f8">${p.h3}</span>`).addTo(map);
+  } else popup.remove();
+});
+document.getElementById('classBtns').onclick = e=>{ if(e.target.dataset.c){ classKey=e.target.dataset.c;
+  [...e.currentTarget.children].forEach(b=>b.classList.toggle('on',b===e.target));
+  map.setPaintProperty('hexfill','fill-color', fillExpr()); refresh(); }};
+document.getElementById('modeBtns').onclick = e=>{ if(e.target.dataset.m && e.target.dataset.m!=="lines"){ mode=e.target.dataset.m;
+  [...e.currentTarget.querySelectorAll('[data-m=raw],[data-m=pc]')].forEach(b=>b.classList.toggle('on',b===e.target));
+  map.setPaintProperty('hexfill','fill-color', fillExpr()); refresh(); }};
+document.getElementById('linesBtn').onclick = e=>{
+  const on = !e.target.classList.contains('on');
+  e.target.classList.toggle('on', on);
+  const v = on ? 'visible' : 'none';
+  map.setLayoutProperty('statehalo','visibility',v);
+  map.setLayoutProperty('statelines','visibility',v);
+  map.setLayoutProperty('statelabels','visibility',v); };
+const gEl = document.getElementById('gamma');
+const VIEWS = {conus: [{lng:-98.5, lat:39.5}, 3.6], ak: [{lng:-152, lat:64.5}, 3.4], hi: [{lng:-157.5, lat:20.8}, 5.6]};
+document.getElementById('viewBtns').onclick = e=>{ const v = e.target.dataset.v; if(!v) return;
+  [...e.currentTarget.children].forEach(b=>b.classList.toggle('on',b===e.target));
+  const [c,z] = VIEWS[v];
+  const dlng = c.lng < -140 ? 360 : 0;   // shortest path across the antimeridian
+  let tc = {lng: c.lng - dlng*0, lat: c.lat}, cc = map.getCenter();
+  if (v !== 'conus' && cc.lng - c.lng > 180) tc = {lng: c.lng + 360, lat: c.lat};
+  if (cc.lng - c.lng < -180) tc = {lng: c.lng - 360, lat: c.lat};
+  map.flyTo({center: tc, zoom: z, speed: 1.6}); };
+gEl.oninput = ()=>{ window.__gamma = +gEl.value;
+  document.getElementById('gammaVal').textContent = gEl.value;
+  map.setPaintProperty('hexfill','fill-color', fillExpr()); };
+window.__gamma = +gEl.value;
+if(hasPop) document.getElementById('pcBtn').style.display='';
+</script></body></html>

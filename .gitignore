@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+data/l_amat*.zip
+data/geocode/
+data/hex/
+data/ham_points.parquet
+data/zip_ref.parquet
+data/cb_*.shp
+data/cb_*.dbf
+data/cb_*.shx
+data/cb_*.prj
+data/cb_*.cpg
+data/*.csv
+out/
+.DS_Store

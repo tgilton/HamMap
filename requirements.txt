@@ -1,0 +1,12 @@
+# Full reproducible pipeline (geocoding steps need internet access)
+pandas
+pyarrow
+requests
+h3
+geopandas
+pyogrio
+shapely
+scipy
+matplotlib
+
+# Just the map + hamdensity queries? pandas + pyarrow + scipy is enough.
